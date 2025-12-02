@@ -1,0 +1,3 @@
+Items: ['rm_1_meet_many', 'rm_2_talk_strangers', 'rm_3_choose_partners', 'rm_4_few_friends_rev', 'rm_5_uncommon_talk_rev', 'rm_6_leave_for_better', 'rm_7_cannot_choose_rev', 'rm_8_easy_to_meet', 'rm_9_stay_in_group_rev', 'rm_10_choose_groups', 'rm_11_must_stay_rel_rev', 'rm_12_must_stay_group_rev']
+N: 26
+Cronbach's Alpha: 0.7866
