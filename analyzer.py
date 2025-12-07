@@ -142,7 +142,7 @@ class SocialAnalyzer:
                 if 0 <= idx < len(group_names):
                     selected_group = group_names[idx]
                     selected_vars = [v for v in self.groups[selected_group] if v in self.df.columns]
-                    for i in len(selected_vars):
+                    for i in range(len(selected_vars)): # range() が必要です
                         print(f"[{i + 1}] : {selected_vars[i]}")
                     return selected_vars # 元々リストなのでそのまま
                 
@@ -183,8 +183,6 @@ class SocialAnalyzer:
     
     def run_basic_stats(self):
         print("\n=== 基本統計量 ===")
-        # 全変数の統計量を出すか、グループごとに絞るか
-        # ここではシンプルに全変数の統計量を出して保存する
         numeric_df = self.df.select_dtypes(include=[np.number])
         stats = numeric_df.describe()
         print(stats)
