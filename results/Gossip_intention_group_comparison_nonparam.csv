@@ -1,0 +1,3 @@
+﻿Variable,Test_Type,Statistic,p_value,Significance,Effect_Size_Type,Effect_Size,Note
+intent_altruistic,Mann-Whitney U,678.0,9.058334378785995e-05,**,r (Rank-biserial),-0.5694444444444444,"[0, 1]"
+intent_fact_telling,Mann-Whitney U,593.0,0.012833520820872116,*,r (Rank-biserial),-0.3726851851851851,"[0, 1]"
