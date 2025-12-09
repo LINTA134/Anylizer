@@ -1,5 +1,0 @@
-﻿Variable,Test_Type,Statistic,p_value,Significance,Effect_Size_Type,Effect_Size,Note
-invest_A_limit,Mann-Whitney U,183.0,0.32131756025800573,,r (Rank-biserial),-0.15094339622641506,"[0, 1]"
-invest_B_limit,Mann-Whitney U,185.5,0.4728314811621236,,r (Rank-biserial),-0.16666666666666674,"[0, 1]"
-invest_C_limit,Mann-Whitney U,159.0,1.0,,r (Rank-biserial),0.0,"[0, 1]"
-invest_X_limit,Mann-Whitney U,117.0,0.24700485569681063,,r (Rank-biserial),0.26415094339622647,"[0, 1]"

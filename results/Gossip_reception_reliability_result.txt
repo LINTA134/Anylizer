@@ -1,3 +1,0 @@
-Items: ['gossip_is_true', 'orange_is_risky', 'orange_is_unethical']
-N: 59
-Cronbach's Alpha: 0.8328
