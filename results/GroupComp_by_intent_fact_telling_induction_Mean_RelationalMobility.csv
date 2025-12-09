@@ -1,0 +1,2 @@
+﻿Variable,Test_Type,Statistic,p_value,Significance,Effect_Size_Type,Effect_Size,Note
+Mean_RelationalMobility,Welch t-test,-0.46640036065352203,0.6585347716868899,,Cohen's d,-0.26305822449729255,"[0, 1]"

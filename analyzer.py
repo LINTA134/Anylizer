@@ -177,10 +177,142 @@ class SocialAnalyzer:
             except:
                 pass
 
+    def _generate_filename(self, analysis_type, y_col, x_cols=None, m_cols=None):
+        """
+        ファイル名を自動生成するヘルパー
+        形式: {分析種別}_Y_{従属変数}_X_{独立変数}_M_{媒介変数}.txt
+        """
+        # ファイル名に使えない文字を除去する関数
+        def sanitize(name):
+            return re.sub(r'[\\/*?:"<>|]', "", str(name))
+
+        name = f"{analysis_type}_Y-{sanitize(y_col)}"
+        
+        if x_cols:
+            if isinstance(x_cols, list):
+                # リストの場合は連結するが、長すぎたら切り詰める
+                x_str = "-".join([sanitize(x) for x in x_cols])
+                if len(x_str) > 30: x_str = x_str[:30] + "..."
+                name += f"_X-{x_str}"
+            else:
+                name += f"_X-{sanitize(x_cols)}"
+        
+        if m_cols:
+            if isinstance(m_cols, list):
+                m_str = "-".join([sanitize(m) for m in m_cols])
+                if len(m_str) > 30: m_str = m_str[:30] + "..."
+                name += f"_M-{m_str}"
+            else:
+                name += f"_M-{sanitize(m_cols)}"
+                
+        return name
+
     # --------------------------------------
     # 分析メソッド (グループ選択UIを使用するように変更)
     # --------------------------------------
-    
+
+    def run_subgroup_filtering(self):
+        print("\n=== サブグループ抽出 (データフィルタリング) ===")
+        print("特定の条件に合致するデータだけを残して、分析対象を絞り込みます。")
+        print("例: 'intent_selfish_induction' が 1 の人だけで分析したい場合など")
+        
+        # フィルタに使う変数を選択
+        print("\n>> フィルタリング条件に使う変数を選んでください")
+        # 誘導変数(0/1)を選ぶことが多いので手動選択
+        col = self.get_column_selection_manual(multi=False)
+        if isinstance(col, list): col = col[0]
+        
+        # その変数のユニークな値を表示して、選択のヒントにする
+        try:
+            unique_vals = sorted(self.df[col].dropna().unique())
+            print(f"\n変数 '{col}' に含まれる値: {unique_vals}")
+        except:
+            pass
+        
+        # 値を入力
+        val_str = input(f"どの値を持つデータを残しますか？ (例: 1): ")
+        
+        try:
+            # 入力値をデータ型に合わせて変換
+            # データ内の型が数値なら数値に変換、そうでなければ文字列のまま
+            if pd.api.types.is_numeric_dtype(self.df[col]):
+                val = float(val_str)
+                # 整数比較のための調整
+                if val.is_integer():
+                    target_val = int(val)
+                else:
+                    target_val = val
+            else:
+                target_val = val_str
+            
+            # フィルタリング実行 (条件に合うものだけを self.df に代入)
+            initial_n = len(self.df)
+            
+            # 数値型でのフィルタリングは少し注意が必要（浮動小数の誤差など）
+            # ここではシンプルに一致判定
+            if pd.api.types.is_numeric_dtype(self.df[col]):
+                self.df = self.df[self.df[col] == float(target_val)]
+            else:
+                self.df = self.df[self.df[col].astype(str) == str(target_val)]
+            
+            new_n = len(self.df)
+            
+            print(f"\n>> 抽出完了: N = {initial_n} -> {new_n}")
+            print("これ以降のすべての分析は、このサブグループに対して行われます。")
+            print("全データに戻す場合は、メニューから 'データの再読み込み(リセット)' を選んでください。")
+            
+        except Exception as e:
+            print(f"エラー: フィルタリングに失敗しました。 ({e})")
+
+    def reload_data(self):
+        print("\n=== データの再読み込み (リセット) ===")
+        print("フィルタリングを解除し、初期状態に戻します。")
+        # __init__ を再度呼び出してリロードする
+        # グローバル変数の DATA_FILE, INDEX_FILE を利用
+        self.__init__(DATA_FILE, INDEX_FILE)
+        print(">> データをリセットしました。")
+
+    def run_standardization(self):
+        print("\n=== 変数の標準化 (Z得点化) ===")
+        print("変数を「平均 0、標準偏差 1」に変換し、新しい変数として保存します。")
+        print("作成される変数名: z_元の変数名 (例: z_invest_A)")
+        
+        # 変数選択 (複数可)
+        target_cols = self.get_group_selection("標準化したい変数を選んでください", multi=True)
+        
+        if not target_cols:
+            return
+        
+        count = 0
+        for col in target_cols:
+            # 数値型かどうかチェック
+            if pd.api.types.is_numeric_dtype(self.df[col]):
+                # 計算 ( (x - mean) / std )
+                mean_val = self.df[col].mean()
+                std_val = self.df[col].std(ddof=1) # 不偏標準偏差
+                
+                if std_val == 0:
+                    print(f"スキップ: {col} (標準偏差が0＝すべての値が同じ ため計算できません)")
+                    continue
+                
+                new_col_name = f"z_{col}"
+                self.df[new_col_name] = (self.df[col] - mean_val) / std_val
+                
+                print(f" -> 作成: {new_col_name} (Mean={mean_val:.2f}, Std={std_val:.2f})")
+                count += 1
+            else:
+                print(f"スキップ: {col} (数値ではないため)")
+
+        if count > 0:
+            print(f"\n>> 計 {count} 個の変数を標準化しました。")
+            # 念のため保存するか聞く
+            if input("データをCSVに保存しますか？ (y/n): ").lower() == 'y':
+                save_path = os.path.join(OUTPUT_DIR, "data_standardized.csv")
+                self.df.to_csv(save_path, index=False, encoding='utf-8_sig')
+                print(f"保存しました: {save_path}")
+            
+            print("これ以降の分析では、作成された 'z_変数名' を選択できます。")
+
     def run_basic_stats(self):
         print("\n=== 基本統計量 ===")
         numeric_df = self.df.select_dtypes(include=[np.number])
@@ -188,7 +320,94 @@ class SocialAnalyzer:
         print(stats)
         stats.to_csv(os.path.join(OUTPUT_DIR, "basic_stats.csv"))
         print("basic_stats.csv に保存しました。")
-    
+
+    def run_distribution_check(self):
+        print("\n=== 変数の分布確認 (ヒストグラム & 歪度/尖度) ===")
+        
+        # 変数選択 (複数可)
+        print(">> 分布を確認したい変数を選んでください。")
+        target_cols = self.get_group_selection("変数を選択", multi=True)
+        if not target_cols: return
+
+        print(f"\n{len(target_cols)} 個の変数の分布を描画します...")
+        
+        for col in target_cols:
+            data = self.df[col].dropna()
+            
+            # 統計量の計算
+            skew = data.skew()
+            kurt = data.kurt()
+            
+            # 描画
+            plt.figure(figsize=(8, 6))
+            sns.histplot(data, kde=True, bins=15, color='skyblue')
+            plt.title(f"分布: {col}\nSkewness={skew:.2f}, Kurtosis={kurt:.2f}")
+            plt.xlabel(col)
+            plt.ylabel("Count")
+            plt.grid(axis='y', linestyle='--', alpha=0.7)
+            
+            # 保存
+            # ファイル名に使えない文字があれば置換するなどの配慮
+            safe_col_name = col.replace("/", "_").replace(":", "")
+            save_path = os.path.join(OUTPUT_DIR, f"dist_{safe_col_name}.png")
+            plt.savefig(save_path)
+            plt.close() # メモリ解放
+            
+            print(f" -> 保存: {save_path} (Skew: {skew:.2f}, Kurt: {kurt:.2f})")
+        
+        print("\n※ Skewness(歪度): 0なら左右対称。正なら左に偏り、負なら右に偏る。")
+        print("※ Kurtosis(尖度): 0なら正規分布並み。正なら尖り、負なら平坦。")
+
+    def run_reliability(self):
+        print("\n=== 信頼性分析 (Cronbach's alpha) ===")
+        # グループ選択UIを呼び出す
+        items = self.get_group_selection("分析したい尺度(グループ)を選んでください")
+        
+        if len(items) < 2:
+            print("エラー: 項目数が足りません(2つ以上必要)。")
+            return
+
+        df_items = self.df[items].dropna()
+        k = df_items.shape[1]
+        
+        # 分散計算
+        sum_item_var = df_items.var(ddof=1).sum()
+        total_score_var = df_items.sum(axis=1).var(ddof=1)
+        
+        if total_score_var == 0:
+            alpha = 0.0
+        else:
+            alpha = (k / (k - 1)) * (1 - (sum_item_var / total_score_var))
+        
+        print("\n--------------------------------")
+        print(f" 項目数 (k): {k}")
+        print(f" 対象データ数 (N): {len(df_items)}")
+        print(f" クロンバッハのα係数: {alpha:.4f}")
+        print("--------------------------------")
+
+        # 結果の保存
+        with open(os.path.join(OUTPUT_DIR, "reliability_result.txt"), "w", encoding="utf-8") as f:
+            f.write(f"Items: {items}\n")
+            f.write(f"N: {len(df_items)}\n")
+            f.write(f"Cronbach's Alpha: {alpha:.4f}\n")
+        print("結果をテキストファイルに保存しました。")
+        
+        # 0.8以上なら高い、などの目安を表示しても親切です
+        if alpha >= 0.8:
+            print(">> 判定: 十分な信頼性があります (High consistency)")
+        elif alpha >= 0.7:
+            print(">> 判定: 許容できる信頼性です (Acceptable)")
+        else:
+            print(">> 判定: 信頼性は低めです。項目の再検討が必要かもしれません。")
+        
+        # 平均値変数の作成提案
+        make_mean = input("この尺度の「平均値」を変数として追加しますか？ (y/n): ")
+        if make_mean.lower() == 'y':
+            # グループ名を取得するために逆引きするか、単純にNamingするか
+            name = input("変数名を入力してください (例: Mean_RelationalMobility): ")
+            self.df[name] = df_items.mean(axis=1)
+            print(f"変数 '{name}' を追加しました。")
+
     def run_group_comparison(self):
         print("\n=== グループ間比較 (検定 + 効果量) ===")
         
@@ -325,126 +544,22 @@ class SocialAnalyzer:
                 
             results.append(res)
 
-        # 4. 結果の表示と保存
+        # 4. 結果の表示と保存 (修正箇所)
         if results:
             results_df = pd.DataFrame(results)
-            # 見やすく表示
             print("\n【検定結果一覧】")
-            # 表示カラムを指定
             cols = ["Variable", "Test_Type", "Statistic", "p_value", "Significance", "Effect_Size_Type", "Effect_Size"]
             print(results_df[cols])
             
-            # CSV保存
-            filename = "group_comparison_nonparam.csv" if is_non_parametric else "group_comparison_param.csv"
+            # --- ファイル名変更 ---
+            base_name = "GroupComp_NonParam" if is_non_parametric else "GroupComp_Param"
+            # グループ変数名(group_col)を含める
+            filename = f"{base_name}_by_{group_col}.csv"
+            
             save_path = os.path.join(OUTPUT_DIR, filename)
             results_df.to_csv(save_path, index=False, encoding='utf-8_sig')
             print(f"\n>> 結果を保存しました: {save_path}")
             print("   (Effect Size目安: d=0.2/0.5/0.8, r=0.1/0.3/0.5, eta2=0.01/0.06/0.14)")
-
-    def run_ordinal_regression(self):
-        print("\n=== 順序ロジスティック回帰分析 ===")
-        print("注: リッカート尺度などの「順序変数」を従属変数(Y)とする場合に使用します。")
-        
-        # 1. 従属変数(Y)の選択
-        print(">> 従属変数(Y)を選んでください（順序尺度である必要があります）。")
-        y_col = self.get_column_selection_manual(multi=False)
-        if isinstance(y_col, list): y_col = y_col[0] # リストで返ってきた場合の保険
-        
-        # 2. 独立変数(X)の選択
-        print("\n>> 独立変数(X)を選んでください。")
-        x_vars = []
-        while True:
-            selection = self.get_group_selection("追加する変数(群)を選んでください")
-            x_vars.extend(selection)
-                
-            cont = input("さらに変数を追加しますか？ (y/n): ")
-            if cont.lower() != 'y':
-                break
-        
-        # 重複除去
-        x_vars = list(set(x_vars))
-        
-        # YがXに含まれていたら削除
-        if y_col in x_vars:
-            x_vars.remove(y_col)
-            
-        print(f"\nモデル構築中: {y_col} ~ {x_vars}")
-        
-        # データ準備
-        data_reg = self.df[[y_col] + x_vars].dropna()
-        
-        if len(data_reg) < 5:
-            print("エラー: 有効なデータ件数が少なすぎます。")
-            return
-
-        try:
-            # モデル定義 (distr='logit' でロジスティック分布を指定)
-            # OrderedModelは Y, X の順で渡す
-            model = OrderedModel(data_reg[y_col], data_reg[x_vars], distr='logit')
-            
-            # フィッティング (method='bfgs' は数値計算が比較的安定しやすい)
-            res = model.fit(method='bfgs', disp=False)
-            
-            print("\n" + "="*40)
-            print(res.summary())
-            print("="*40)
-            
-            # 結果保存
-            save_file = os.path.join(OUTPUT_DIR, "ordinal_regression_summary.txt")
-            with open(save_file, "w") as f:
-                f.write(res.summary().as_text())
-            print(f">> 結果を保存しました: {save_file}")
-            
-            # オッズ比の表示（解釈しやすいため）
-            print("\n【参考: オッズ比 (Odds Ratios)】")
-            print("係数(Coef)の指数をとった値です。1より大きければ正の影響、1未満なら負の影響を表します。")
-            params = res.params
-            conf = res.conf_int()
-            conf['Odds Ratio'] = params
-            conf.columns = ['2.5%', '97.5%', 'Odds Ratio']
-            # 指数変換
-            out = np.exp(conf)
-            print(out[['Odds Ratio', '2.5%', '97.5%']])
-
-        except Exception as e:
-            print(f"\n計算エラーが発生しました: {e}")
-            print("考えられる原因:")
-            print("- サンプルサイズに対して変数が多すぎる")
-            print("- 従属変数のカテゴリごとの度数が0または極端に少ない")
-            print("- データ間の相関が高すぎる (多重共線性)")
-
-    def run_regression(self):
-        print("\n=== 回帰分析 ===")
-        # 従属変数は単一選択 (手動選択モード推奨)
-        print(">> 従属変数(Y)を選びます。")
-        y = self.get_column_selection_manual(multi=False) # Yはたいてい1つの変数なので手動選択へ
-        
-        print(">> 独立変数(X)を選びます。グループ選択も可能です。")
-        # グループで選ぶか手動で選ぶか
-        x_vars = []
-        while True:
-            selection = self.get_group_selection("追加する変数(群)を選んでください")
-            if isinstance(selection, list):
-                x_vars.extend(selection)
-            else:
-                x_vars.append(selection)
-                
-            cont = input("さらに変数を追加しますか？ (y/n): ")
-            if cont.lower() != 'y':
-                break
-        
-        # 重複除去
-        x_vars = list(set(x_vars))
-        print(f"独立変数リスト: {x_vars}")
-
-        data_reg = self.df[[y] + x_vars].dropna()
-        Y_val = data_reg[y]
-        X_val = sm.add_constant(data_reg[x_vars])
-        
-        model = sm.OLS(Y_val, X_val).fit()
-        print(model.summary())
-        with open(os.path.join(OUTPUT_DIR, "regression.txt"), "w") as f:
-            f.write(model.summary().as_text())
 
     def run_distribution_check(self):
         print("\n=== 変数の分布確認 (ヒストグラム & 歪度/尖度) ===")
@@ -531,40 +646,6 @@ class SocialAnalyzer:
         plt.close()
         print(f">> ヒートマップ画像を保存しました: {img_path}")
 
-    def run_pca(self):
-        print("\n=== 主成分分析 (PCA) ===")
-        items = self.get_group_selection("分析に使用する変数群を選んでください")
-        
-        data_for_pca = self.df[items].dropna()
-        if data_for_pca.empty:
-            print("有効なデータがありません。")
-            return
-
-        scaler = StandardScaler()
-        X_std = scaler.fit_transform(data_for_pca)
-        
-        pca = PCA()
-        pca.fit(X_std)
-        
-        print("\n【寄与率】")
-        for i, r in enumerate(pca.explained_variance_ratio_):
-            print(f"PC{i+1}: {r:.3f}")
-            
-        loadings = pd.DataFrame(pca.components_.T, index=items, columns=[f"PC{i+1}" for i in range(len(items))])
-        loadings.to_csv(os.path.join(OUTPUT_DIR, "pca_loadings.csv"))
-        print("因子負荷量を保存しました。")
-
-        # 得点追加
-        scores = pca.transform(X_std)
-        try:
-            n = int(input("保存する主成分数 (例: 1): "))
-        except:
-            n = 0
-        for i in range(n):
-            col_name = f"PCA_{items[0][:5]}_PC{i+1}" # 変数名の一部を使って命名
-            self.df.loc[data_for_pca.index, col_name] = scores[:, i]
-            print(f"変数追加: {col_name}")
-
     def run_reliability(self):
         print("\n=== 信頼性分析 (Cronbach's alpha) ===")
         # グループ選択UIを呼び出す
@@ -615,9 +696,160 @@ class SocialAnalyzer:
             self.df[name] = df_items.mean(axis=1)
             print(f"変数 '{name}' を追加しました。")
 
+    def run_pca(self):
+        print("\n=== 主成分分析 (PCA) ===")
+        items = self.get_group_selection("分析に使用する変数群を選んでください")
+        
+        data_for_pca = self.df[items].dropna()
+        if data_for_pca.empty:
+            print("有効なデータがありません。")
+            return
+
+        scaler = StandardScaler()
+        X_std = scaler.fit_transform(data_for_pca)
+        
+        pca = PCA()
+        pca.fit(X_std)
+        
+        print("\n【寄与率】")
+        for i, r in enumerate(pca.explained_variance_ratio_):
+            print(f"PC{i+1}: {r:.3f}")
+            
+        loadings = pd.DataFrame(pca.components_.T, index=items, columns=[f"PC{i+1}" for i in range(len(items))])
+        loadings.to_csv(os.path.join(OUTPUT_DIR, "pca_loadings.csv"))
+        print("因子負荷量を保存しました。")
+
+        # 得点追加
+        scores = pca.transform(X_std)
+        try:
+            n = int(input("保存する主成分数 (例: 1): "))
+        except:
+            n = 0
+        for i in range(n):
+            col_name = f"PCA_{items[0][:5]}_PC{i+1}" # 変数名の一部を使って命名
+            self.df.loc[data_for_pca.index, col_name] = scores[:, i]
+            print(f"変数追加: {col_name}")
+
+    def _ask_add_constant(self):
+        """定数項(切片)を追加するかユーザーに尋ねる"""
+        print("\n>> 定数項 (Intercept/Constant) をモデルに追加しますか？")
+        print("   y: 追加する (推奨 / Default) -> y = ax + b")
+        print("   n: 追加しない (原点を通る)   -> y = ax")
+        choice = input("選択 (y/n): ").lower()
+        return choice != 'n'
+
+    def run_regression(self):
+        print("\n=== 回帰分析 (OLS) ===")
+        # 従属変数は単一選択
+        print(">> 従属変数(Y)を選びます。")
+        y = self.get_column_selection_manual(multi=False)
+        
+        print(">> 独立変数(X)を選びます。グループ選択も可能です。")
+        x_vars = []
+        while True:
+            selection = self.get_group_selection("追加する変数(群)を選んでください")
+            if isinstance(selection, list):
+                x_vars.extend(selection)
+            else:
+                x_vars.append(selection)
+            
+            cont = input("さらに変数を追加しますか？ (y/n): ")
+            if cont.lower() != 'y':
+                break
+        
+        x_vars = list(set(x_vars))
+        print(f"独立変数リスト: {x_vars}")
+
+        # 定数項の確認
+        add_const = self._ask_add_constant()
+
+        data_reg = self.df[[y] + x_vars].dropna()
+        Y_val = data_reg[y]
+        X_val = data_reg[x_vars]
+        
+        if add_const:
+            X_val = sm.add_constant(X_val)
+        
+        model = sm.OLS(Y_val, X_val).fit()
+        print(model.summary())
+        
+        # ファイル名変更
+        fname = self._generate_filename("OLS", y, x_cols=x_vars) + ".txt"
+        save_path = os.path.join(OUTPUT_DIR, fname)
+        
+        with open(save_path, "w", encoding='utf-8') as f:
+            f.write(model.summary().as_text())
+        print(f">> 結果を保存しました: {save_path}")
+
+    def run_ordinal_regression(self):
+        print("\n=== 順序ロジスティック回帰分析 ===")
+        print("注: リッカート尺度などの「順序変数」を従属変数(Y)とする場合に使用します。")
+        
+        # 1. 従属変数(Y)の選択
+        print(">> 従属変数(Y)を選んでください（順序尺度である必要があります）。")
+        y_col = self.get_column_selection_manual(multi=False)
+        if isinstance(y_col, list): y_col = y_col[0]
+        
+        # 2. 独立変数(X)の選択
+        print("\n>> 独立変数(X)を選んでください。")
+        x_vars = []
+        while True:
+            selection = self.get_group_selection("追加する変数(群)を選んでください")
+            x_vars.extend(selection)
+            cont = input("さらに変数を追加しますか？ (y/n): ")
+            if cont.lower() != 'y': break
+        
+        x_vars = list(set(x_vars))
+        if y_col in x_vars: x_vars.remove(y_col)
+            
+        print(f"\nモデル構築中: {y_col} ~ {x_vars}")
+        
+        # 定数項の確認
+        add_const = self._ask_add_constant()
+        if add_const:
+            print("※注: 順序ロジスティック回帰では、通常は定数項(切片)を含めません（閾値に含まれるため）。")
+            print("      意図的に含める場合のみ、そのまま続行してください。")
+
+        # データ準備
+        data_reg = self.df[[y_col] + x_vars].dropna()
+        if len(data_reg) < 5:
+            print("エラー: 有効なデータ件数が少なすぎます。")
+            return
+
+        try:
+            exog = data_reg[x_vars]
+            if add_const:
+                exog = sm.add_constant(exog)
+
+            # モデル定義
+            model = OrderedModel(data_reg[y_col], exog, distr='logit')
+            res = model.fit(method='bfgs', disp=False)
+            
+            print("\n" + "="*40)
+            print(res.summary())
+            print("="*40)
+            
+            # 結果保存
+            fname = self._generate_filename("OrdReg", y_col, x_cols=x_vars) + ".txt"
+            save_file = os.path.join(OUTPUT_DIR, fname)
+            with open(save_file, "w", encoding='utf-8') as f:
+                f.write(res.summary().as_text())
+            print(f">> 結果を保存しました: {save_file}")
+            
+            # オッズ比
+            print("\n【参考: オッズ比 (Odds Ratios)】")
+            params = res.params
+            conf = res.conf_int()
+            conf['Odds Ratio'] = params
+            conf.columns = ['2.5%', '97.5%', 'Odds Ratio']
+            out = np.exp(conf)
+            print(out[['Odds Ratio', '2.5%', '97.5%']])
+
+        except Exception as e:
+            print(f"\n計算エラーが発生しました: {e}")
+
     def run_mediation_analysis(self):
         print("\n=== ハイブリッド媒介分析 (Y:順序尺度 / M:連続尺度) ===")
-        print("媒介変数は「連続量」とみなし(OLS)、従属変数は「順序尺度」として(Ordered Logit)分析します。")
         print("------------------------------------------")
         print("[1] 単純媒介分析 (Model 4): X -> M -> Y")
         print("[2] 系列媒介分析 (Model 6): X -> M1 -> M2 -> Y")
@@ -625,18 +857,21 @@ class SocialAnalyzer:
         
         mode = input("分析モデルを選択してください (1 or 2): ")
         
+        # ここで定数項の設定を一括して聞く
+        add_const = self._ask_add_constant()
+        
         if mode == '1':
-            self._run_simple_mediation_hybrid()
+            self._run_simple_mediation_hybrid(add_const)
         elif mode == '2':
-            self._run_serial_mediation_hybrid()
+            self._run_serial_mediation_hybrid(add_const)
         else:
             print("無効な選択です。メニューに戻ります。")
 
-    def _run_simple_mediation_hybrid(self):
+    def _run_simple_mediation_hybrid(self, add_const):
         """単純媒介分析 (Model 4) の実行部"""
         print("\n--- Model 4: 単純媒介分析 (X -> M -> Y) ---")
         
-        # 変数選択
+        # 変数選択 (省略せず記述)
         print("\n>> 1. 従属変数 (Y: 順序尺度) を選んでください")
         y_col = self.get_column_selection_manual(multi=False)
         if isinstance(y_col, list): y_col = y_col[0]
@@ -649,10 +884,8 @@ class SocialAnalyzer:
         m_col = self.get_column_selection_manual(multi=False)
         if isinstance(m_col, list): m_col = m_col[0]
 
-        # 統制変数
         cov_vars = self._select_covariates([y_col, x_col, m_col])
         
-        # データ準備
         target_cols = [y_col, x_col, m_col] + cov_vars
         df_model = self.df[target_cols].apply(pd.to_numeric, errors='coerce').dropna()
         
@@ -663,15 +896,19 @@ class SocialAnalyzer:
         print(f"\n分析対象データ数: N = {len(df_model)}")
         print("ブートストラップ検定を実行中... (Model 4)")
 
-        # 内部関数: 推定ロジック
+        # 内部関数: 推定ロジック (add_constを使用)
         def fit_model4(data):
             # Path a (X -> M): OLS
-            X_a = sm.add_constant(data[[x_col] + cov_vars])
+            X_a = data[[x_col] + cov_vars]
+            if add_const: X_a = sm.add_constant(X_a)
+            
             model_a = sm.OLS(data[m_col], X_a).fit()
             a = model_a.params[x_col]
             
             # Path b, c' (X, M -> Y): Ordered Logit
             exog_b = data[[x_col, m_col] + cov_vars]
+            if add_const: exog_b = sm.add_constant(exog_b)
+            
             model_b = OrderedModel(data[y_col], exog_b, distr='logit')
             res_b = model_b.fit(method='bfgs', disp=False, maxiter=50)
             
@@ -681,9 +918,12 @@ class SocialAnalyzer:
             return {'a': a, 'b': b, 'c_prime': c_prime, 'ind': a * b}
 
         # 実行と結果表示
-        self._execute_bootstrap_and_report(df_model, fit_model4, "Model 4 (Simple)", ['ind'])
+        self._execute_bootstrap_and_report(
+            df_model, fit_model4, "Model4", ['ind'], 
+            y_col, x_col, [m_col]
+        )
 
-    def _run_serial_mediation_hybrid(self):
+    def _run_serial_mediation_hybrid(self, add_const):
         """系列媒介分析 (Model 6) の実行部"""
         print("\n--- Model 6: 系列媒介分析 (X -> M1 -> M2 -> Y) ---")
         
@@ -696,18 +936,16 @@ class SocialAnalyzer:
         x_col = self.get_column_selection_manual(multi=False)
         if isinstance(x_col, list): x_col = x_col[0]
         
-        print("\n>> 3. 第1媒介変数 (M1: 連続と仮定) を選んでください (Xの直後)")
+        print("\n>> 3. 第1媒介変数 (M1: 連続と仮定) を選んでください")
         m1_col = self.get_column_selection_manual(multi=False)
         if isinstance(m1_col, list): m1_col = m1_col[0]
         
-        print("\n>> 4. 第2媒介変数 (M2: 連続と仮定) を選んでください (M1の直後)")
+        print("\n>> 4. 第2媒介変数 (M2: 連続と仮定) を選んでください")
         m2_col = self.get_column_selection_manual(multi=False)
         if isinstance(m2_col, list): m2_col = m2_col[0]
 
-        # 統制変数
         cov_vars = self._select_covariates([y_col, x_col, m1_col, m2_col])
         
-        # データ準備
         target_cols = [y_col, x_col, m1_col, m2_col] + cov_vars
         df_model = self.df[target_cols].apply(pd.to_numeric, errors='coerce').dropna()
         
@@ -718,21 +956,27 @@ class SocialAnalyzer:
         print(f"\n分析対象データ数: N = {len(df_model)}")
         print("ブートストラップ検定を実行中... (Model 6)")
 
-        # 内部関数: 推定ロジック
+        # 内部関数: 推定ロジック (add_constを使用)
         def fit_model6(data):
-            # Step 1: M1 ~ X (OLS) -> Path a1
-            X_1 = sm.add_constant(data[[x_col] + cov_vars])
+            # Step 1: M1 ~ X (OLS)
+            X_1 = data[[x_col] + cov_vars]
+            if add_const: X_1 = sm.add_constant(X_1)
+            
             m1_model = sm.OLS(data[m1_col], X_1).fit()
             a1 = m1_model.params[x_col]
             
-            # Step 2: M2 ~ X + M1 (OLS) -> Path a2, d21
-            X_2 = sm.add_constant(data[[x_col, m1_col] + cov_vars])
+            # Step 2: M2 ~ X + M1 (OLS)
+            X_2 = data[[x_col, m1_col] + cov_vars]
+            if add_const: X_2 = sm.add_constant(X_2)
+            
             m2_model = sm.OLS(data[m2_col], X_2).fit()
             a2 = m2_model.params[x_col]
-            d21 = m2_model.params[m1_col] # M1 -> M2
+            d21 = m2_model.params[m1_col]
             
-            # Step 3: Y ~ X + M1 + M2 (Ordered Logit) -> Path c', b1, b2
+            # Step 3: Y ~ X + M1 + M2 (Ordered Logit)
             exog_y = data[[x_col, m1_col, m2_col] + cov_vars]
+            if add_const: exog_y = sm.add_constant(exog_y)
+            
             y_model = OrderedModel(data[y_col], exog_y, distr='logit')
             y_res = y_model.fit(method='bfgs', disp=False, maxiter=50)
             
@@ -740,10 +984,9 @@ class SocialAnalyzer:
             b1 = y_res.params[m1_col]
             b2 = y_res.params[m2_col]
             
-            # 間接効果の計算
-            ind1 = a1 * b1              # X -> M1 -> Y
-            ind2 = a2 * b2              # X -> M2 -> Y
-            ind3 = a1 * d21 * b2        # X -> M1 -> M2 -> Y (Serial)
+            ind1 = a1 * b1
+            ind2 = a2 * b2
+            ind3 = a1 * d21 * b2
             total_ind = ind1 + ind2 + ind3
             
             return {
@@ -751,10 +994,10 @@ class SocialAnalyzer:
                 'a1': a1, 'a2': a2, 'd21': d21, 'b1': b1, 'b2': b2, 'c_prime': c_prime
             }
 
-        # 実行と結果表示
         self._execute_bootstrap_and_report(
-            df_model, fit_model6, "Model 6 (Serial)", 
-            ['ind1', 'ind2', 'ind3', 'total_ind']
+            df_model, fit_model6, "Model6", 
+            ['ind1', 'ind2', 'ind3', 'total_ind'],
+            y_col, x_col, [m1_col, m2_col]
         )
 
     def _select_covariates(self, exclude_cols):
@@ -767,7 +1010,7 @@ class SocialAnalyzer:
         used_cols = set(exclude_cols)
         return [c for c in cov_vars if c not in used_cols]
 
-    def _execute_bootstrap_and_report(self, df, fit_func, title, effect_keys):
+    def _execute_bootstrap_and_report(self, df, fit_func, title, effect_keys, y_name, x_name, m_names):
         """ブートストラップ実行と結果レポートの共通処理"""
         n_boot = 2000
         results_boot = {k: [] for k in effect_keys}
@@ -836,72 +1079,12 @@ class SocialAnalyzer:
         print(f"{'='*60}")
         
         # 保存
-        save_path = os.path.join(OUTPUT_DIR, "mediation_hybrid_result.txt")
+        fname = self._generate_filename(f"Mediation_{title}", y_name, x_name, m_names) + ".txt"
+        save_path = os.path.join(OUTPUT_DIR, fname)
+        
         with open(save_path, "w", encoding='utf-8') as f:
             f.writelines(save_lines)
         print(f"結果を保存しました: {save_path}")
-
-    def run_subgroup_filtering(self):
-        print("\n=== サブグループ抽出 (データフィルタリング) ===")
-        print("特定の条件に合致するデータだけを残して、分析対象を絞り込みます。")
-        print("例: 'intent_selfish_induction' が 1 の人だけで分析したい場合など")
-        
-        # フィルタに使う変数を選択
-        print("\n>> フィルタリング条件に使う変数を選んでください")
-        # 誘導変数(0/1)を選ぶことが多いので手動選択
-        col = self.get_column_selection_manual(multi=False)
-        if isinstance(col, list): col = col[0]
-        
-        # その変数のユニークな値を表示して、選択のヒントにする
-        try:
-            unique_vals = sorted(self.df[col].dropna().unique())
-            print(f"\n変数 '{col}' に含まれる値: {unique_vals}")
-        except:
-            pass
-        
-        # 値を入力
-        val_str = input(f"どの値を持つデータを残しますか？ (例: 1): ")
-        
-        try:
-            # 入力値をデータ型に合わせて変換
-            # データ内の型が数値なら数値に変換、そうでなければ文字列のまま
-            if pd.api.types.is_numeric_dtype(self.df[col]):
-                val = float(val_str)
-                # 整数比較のための調整
-                if val.is_integer():
-                    target_val = int(val)
-                else:
-                    target_val = val
-            else:
-                target_val = val_str
-            
-            # フィルタリング実行 (条件に合うものだけを self.df に代入)
-            initial_n = len(self.df)
-            
-            # 数値型でのフィルタリングは少し注意が必要（浮動小数の誤差など）
-            # ここではシンプルに一致判定
-            if pd.api.types.is_numeric_dtype(self.df[col]):
-                self.df = self.df[self.df[col] == float(target_val)]
-            else:
-                self.df = self.df[self.df[col].astype(str) == str(target_val)]
-            
-            new_n = len(self.df)
-            
-            print(f"\n>> 抽出完了: N = {initial_n} -> {new_n}")
-            print("これ以降のすべての分析は、このサブグループに対して行われます。")
-            print("全データに戻す場合は、メニューから 'データの再読み込み(リセット)' を選んでください。")
-            
-        except Exception as e:
-            print(f"エラー: フィルタリングに失敗しました。 ({e})")
-
-    def reload_data(self):
-        print("\n=== データの再読み込み (リセット) ===")
-        print("フィルタリングを解除し、初期状態に戻します。")
-        # __init__ を再度呼び出してリロードする
-        # グローバル変数の DATA_FILE, INDEX_FILE を利用
-        self.__init__(DATA_FILE, INDEX_FILE)
-        print(">> データをリセットしました。")
-
 
 if __name__ == "__main__":
     analyzer = SocialAnalyzer(DATA_FILE, INDEX_FILE)
@@ -911,27 +1094,29 @@ if __name__ == "__main__":
         print("0. 終了")
         print("1. サブグループ抽出 (フィルタリング)")
         print("2. データの再読み込み (リセット)")
-        print("3. 基本統計量")
-        print("4. 変数の分布確認 (ヒストグラム)")
-        print("5. 信頼性分析 (α係数)")
-        print("6. 相関分析 & ヒートマップ")
-        print("7. グループ間比較 (t検定 / 分散分析 / ノンパラ)")
-        print("8. 主成分分析 (PCA)")
-        print("9. 通常の回帰分析 (OLS)")
-        print("10. 順序ロジスティック回帰分析")
-        print("11. 媒介分析 (Model 4 / Model 6)")
+        print("3. 変数の標準化 (Z得点化)")
+        print("4. 基本統計量")
+        print("5. 変数の分布確認 (ヒストグラム)")
+        print("6. 信頼性分析 (α係数)")
+        print("7. 相関分析 & ヒートマップ")
+        print("8. グループ間比較 (t検定 / 分散分析 / ノンパラ)")
+        print("9. 主成分分析 (PCA)")
+        print("10. 通常の回帰分析 (OLS)")
+        print("11. 順序ロジスティック回帰分析")
+        print("12. 媒介分析 (Model 4 / Model 6)")
         print("==============================")
         
         c = input("選択: ")
         if c == '0': break
         elif c == '1': analyzer.run_subgroup_filtering()
         elif c == '2': analyzer.reload_data()
-        elif c == '3': analyzer.run_basic_stats()
-        elif c == '4': analyzer.run_distribution_check()
-        elif c == '5': analyzer.run_reliability()
-        elif c == '6': analyzer.run_correlation_analysis()
-        elif c == '7': analyzer.run_group_comparison()
-        elif c == '8': analyzer.run_pca()
-        elif c == '9': analyzer.run_regression()
-        elif c == '10': analyzer.run_ordinal_regression()
-        elif c == '11': analyzer.run_mediation_analysis()
+        elif c == '3': analyzer.run_standardization()
+        elif c == '4': analyzer.run_basic_stats()
+        elif c == '5': analyzer.run_distribution_check()
+        elif c == '6': analyzer.run_reliability()
+        elif c == '7': analyzer.run_correlation_analysis()
+        elif c == '8': analyzer.run_group_comparison()
+        elif c == '9': analyzer.run_pca()
+        elif c == '10': analyzer.run_regression()
+        elif c == '11': analyzer.run_ordinal_regression()
+        elif c == '12': analyzer.run_mediation_analysis()

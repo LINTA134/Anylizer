@@ -1,0 +1,2 @@
+﻿Variable,Test_Type,Statistic,p_value,Significance,Effect_Size_Type,Effect_Size,Note
+Mean_Gossip_intention,Welch t-test,3.043024480561487,0.004298537455189705,**,Cohen's d,0.915015012207078,"[0, 1]"

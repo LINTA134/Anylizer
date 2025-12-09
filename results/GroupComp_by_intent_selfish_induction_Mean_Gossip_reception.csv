@@ -1,0 +1,2 @@
+﻿Variable,Test_Type,Statistic,p_value,Significance,Effect_Size_Type,Effect_Size,Note
+Mean_Gossip_reception,Welch t-test,1.502977457138013,0.18591867795013867,,Cohen's d,0.7874425374963795,"[0, 1]"
