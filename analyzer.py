@@ -841,31 +841,97 @@ class SocialAnalyzer:
             f.writelines(save_lines)
         print(f"結果を保存しました: {save_path}")
 
+    def run_subgroup_filtering(self):
+        print("\n=== サブグループ抽出 (データフィルタリング) ===")
+        print("特定の条件に合致するデータだけを残して、分析対象を絞り込みます。")
+        print("例: 'intent_selfish_induction' が 1 の人だけで分析したい場合など")
+        
+        # フィルタに使う変数を選択
+        print("\n>> フィルタリング条件に使う変数を選んでください")
+        # 誘導変数(0/1)を選ぶことが多いので手動選択
+        col = self.get_column_selection_manual(multi=False)
+        if isinstance(col, list): col = col[0]
+        
+        # その変数のユニークな値を表示して、選択のヒントにする
+        try:
+            unique_vals = sorted(self.df[col].dropna().unique())
+            print(f"\n変数 '{col}' に含まれる値: {unique_vals}")
+        except:
+            pass
+        
+        # 値を入力
+        val_str = input(f"どの値を持つデータを残しますか？ (例: 1): ")
+        
+        try:
+            # 入力値をデータ型に合わせて変換
+            # データ内の型が数値なら数値に変換、そうでなければ文字列のまま
+            if pd.api.types.is_numeric_dtype(self.df[col]):
+                val = float(val_str)
+                # 整数比較のための調整
+                if val.is_integer():
+                    target_val = int(val)
+                else:
+                    target_val = val
+            else:
+                target_val = val_str
+            
+            # フィルタリング実行 (条件に合うものだけを self.df に代入)
+            initial_n = len(self.df)
+            
+            # 数値型でのフィルタリングは少し注意が必要（浮動小数の誤差など）
+            # ここではシンプルに一致判定
+            if pd.api.types.is_numeric_dtype(self.df[col]):
+                self.df = self.df[self.df[col] == float(target_val)]
+            else:
+                self.df = self.df[self.df[col].astype(str) == str(target_val)]
+            
+            new_n = len(self.df)
+            
+            print(f"\n>> 抽出完了: N = {initial_n} -> {new_n}")
+            print("これ以降のすべての分析は、このサブグループに対して行われます。")
+            print("全データに戻す場合は、メニューから 'データの再読み込み(リセット)' を選んでください。")
+            
+        except Exception as e:
+            print(f"エラー: フィルタリングに失敗しました。 ({e})")
+
+    def reload_data(self):
+        print("\n=== データの再読み込み (リセット) ===")
+        print("フィルタリングを解除し、初期状態に戻します。")
+        # __init__ を再度呼び出してリロードする
+        # グローバル変数の DATA_FILE, INDEX_FILE を利用
+        self.__init__(DATA_FILE, INDEX_FILE)
+        print(">> データをリセットしました。")
+
+
 if __name__ == "__main__":
     analyzer = SocialAnalyzer(DATA_FILE, INDEX_FILE)
     
     while True:
         print("\n==============================")
-        print("1. 基本統計量")
-        print("2. グループ間比較 (t検定 / 分散分析 / ノンパラ)")
-        print("3. 順序ロジスティック回帰分析")
-        print("4. 通常の回帰分析 (OLS)")
-        print("5. 変数の分布確認 (ヒストグラム)") # <--- 追加
-        print("6. 主成分分析 (PCA)")
-        print("7. 信頼性分析 (α係数)")
-        print("8. 媒介分析 (Model 4 / Model 6)")
-        print("9. 相関分析 & ヒートマップ")       # <--- 追加
         print("0. 終了")
+        print("1. サブグループ抽出 (フィルタリング)")
+        print("2. データの再読み込み (リセット)")
+        print("3. 基本統計量")
+        print("4. 変数の分布確認 (ヒストグラム)")
+        print("5. 信頼性分析 (α係数)")
+        print("6. 相関分析 & ヒートマップ")
+        print("7. グループ間比較 (t検定 / 分散分析 / ノンパラ)")
+        print("8. 主成分分析 (PCA)")
+        print("9. 通常の回帰分析 (OLS)")
+        print("10. 順序ロジスティック回帰分析")
+        print("11. 媒介分析 (Model 4 / Model 6)")
         print("==============================")
         
         c = input("選択: ")
         if c == '0': break
-        elif c == '1': analyzer.run_basic_stats()
-        elif c == '2': analyzer.run_group_comparison()
-        elif c == '3': analyzer.run_ordinal_regression()
-        elif c == '4': analyzer.run_regression()
-        elif c == '5': analyzer.run_distribution_check() # <--- 追加
-        elif c == '6': analyzer.run_pca()
-        elif c == '7': analyzer.run_reliability()
-        elif c == '8': analyzer.run_mediation_analysis()
-        elif c == '9': analyzer.run_correlation_analysis() # <--- 追加
+        elif c == '1': analyzer.run_subgroup_filtering()
+        elif c == '2': analyzer.reload_data()
+        elif c == '3': analyzer.run_basic_stats()
+        elif c == '4': analyzer.run_distribution_check()
+        elif c == '5': analyzer.run_reliability()
+        elif c == '6': analyzer.run_correlation_analysis()
+        elif c == '7': analyzer.run_group_comparison()
+        elif c == '8': analyzer.run_pca()
+        elif c == '9': analyzer.run_regression()
+        elif c == '10': analyzer.run_ordinal_regression()
+        elif c == '11': analyzer.run_mediation_analysis()
