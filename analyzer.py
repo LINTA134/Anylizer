@@ -446,6 +446,91 @@ class SocialAnalyzer:
         with open(os.path.join(OUTPUT_DIR, "regression.txt"), "w") as f:
             f.write(model.summary().as_text())
 
+    def run_distribution_check(self):
+        print("\n=== 変数の分布確認 (ヒストグラム & 歪度/尖度) ===")
+        
+        # 変数選択 (複数可)
+        print(">> 分布を確認したい変数を選んでください。")
+        target_cols = self.get_group_selection("変数を選択", multi=True)
+        if not target_cols: return
+
+        print(f"\n{len(target_cols)} 個の変数の分布を描画します...")
+        
+        for col in target_cols:
+            data = self.df[col].dropna()
+            
+            # 統計量の計算
+            skew = data.skew()
+            kurt = data.kurt()
+            
+            # 描画
+            plt.figure(figsize=(8, 6))
+            sns.histplot(data, kde=True, bins=15, color='skyblue')
+            plt.title(f"分布: {col}\nSkewness={skew:.2f}, Kurtosis={kurt:.2f}")
+            plt.xlabel(col)
+            plt.ylabel("Count")
+            plt.grid(axis='y', linestyle='--', alpha=0.7)
+            
+            # 保存
+            # ファイル名に使えない文字があれば置換するなどの配慮
+            safe_col_name = col.replace("/", "_").replace(":", "")
+            save_path = os.path.join(OUTPUT_DIR, f"dist_{safe_col_name}.png")
+            plt.savefig(save_path)
+            plt.close() # メモリ解放
+            
+            print(f" -> 保存: {save_path} (Skew: {skew:.2f}, Kurt: {kurt:.2f})")
+        
+        print("\n※ Skewness(歪度): 0なら左右対称。正なら左に偏り、負なら右に偏る。")
+        print("※ Kurtosis(尖度): 0なら正規分布並み。正なら尖り、負なら平坦。")
+
+    def run_correlation_analysis(self):
+        print("\n=== 相関分析 & ヒートマップ ===")
+        
+        # 変数選択
+        print(">> 相関を見たい変数群を選んでください。")
+        target_cols = []
+        while True:
+            selection = self.get_group_selection("追加する変数(群)を選んでください")
+            if isinstance(selection, list):
+                target_cols.extend(selection)
+            else:
+                target_cols.append(selection)
+            
+            if len(target_cols) >= 2:
+                cont = input(f"現在 {len(target_cols)} 個選択中。さらに追加しますか？ (y/n): ")
+                if cont.lower() != 'y':
+                    break
+            else:
+                print("相関を計算するには少なくとも2つの変数が必要です。")
+        
+        # 重複除去
+        target_cols = list(set(target_cols))
+        
+        # 相関係数の種類選択
+        print("\n>> 計算手法を選んでください")
+        print("[1] Pearson (積率相関) : 連続変数、正規分布向け")
+        print("[2] Spearman (順位相関): 順序変数、非正規分布向け ★順序尺度ならこちら")
+        method = 'pearson' if input("選択 (1/2): ") != '2' else 'spearman'
+        
+        # 計算
+        corr_matrix = self.df[target_cols].corr(method=method)
+        
+        # 1. CSV保存
+        csv_path = os.path.join(OUTPUT_DIR, f"correlation_matrix_{method}.csv")
+        corr_matrix.to_csv(csv_path, encoding='utf-8_sig')
+        print(f"\n>> 相関行列を保存しました: {csv_path}")
+        
+        # 2. ヒートマップ描画と保存
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(corr_matrix, annot=True, fmt=".2f", cmap='coolwarm', 
+                    vmin=-1, vmax=1, center=0, square=True)
+        plt.title(f"Correlation Heatmap ({method.capitalize()})")
+        
+        img_path = os.path.join(OUTPUT_DIR, f"correlation_heatmap_{method}.png")
+        plt.savefig(img_path, bbox_inches='tight')
+        plt.close()
+        print(f">> ヒートマップ画像を保存しました: {img_path}")
+
     def run_pca(self):
         print("\n=== 主成分分析 (PCA) ===")
         items = self.get_group_selection("分析に使用する変数群を選んでください")
@@ -531,12 +616,28 @@ class SocialAnalyzer:
             print(f"変数 '{name}' を追加しました。")
 
     def run_mediation_analysis(self):
-        print("\n=== 媒介分析 (ブートストラップ法) ===")
-        print("HayesのModel 4 (単純媒介) に相当します。")
-        print("パス図: X (独立) --> M (媒介) --> Y (従属)")
+        print("\n=== ハイブリッド媒介分析 (Y:順序尺度 / M:連続尺度) ===")
+        print("媒介変数は「連続量」とみなし(OLS)、従属変数は「順序尺度」として(Ordered Logit)分析します。")
+        print("------------------------------------------")
+        print("[1] 単純媒介分析 (Model 4): X -> M -> Y")
+        print("[2] 系列媒介分析 (Model 6): X -> M1 -> M2 -> Y")
+        print("------------------------------------------")
         
-        # 1. 変数選択
-        print("\n>> 1. 従属変数 (Y) を選んでください")
+        mode = input("分析モデルを選択してください (1 or 2): ")
+        
+        if mode == '1':
+            self._run_simple_mediation_hybrid()
+        elif mode == '2':
+            self._run_serial_mediation_hybrid()
+        else:
+            print("無効な選択です。メニューに戻ります。")
+
+    def _run_simple_mediation_hybrid(self):
+        """単純媒介分析 (Model 4) の実行部"""
+        print("\n--- Model 4: 単純媒介分析 (X -> M -> Y) ---")
+        
+        # 変数選択
+        print("\n>> 1. 従属変数 (Y: 順序尺度) を選んでください")
         y_col = self.get_column_selection_manual(multi=False)
         if isinstance(y_col, list): y_col = y_col[0]
 
@@ -544,110 +645,201 @@ class SocialAnalyzer:
         x_col = self.get_column_selection_manual(multi=False)
         if isinstance(x_col, list): x_col = x_col[0]
         
-        print("\n>> 3. 媒介変数 (M) を選んでください")
+        print("\n>> 3. 媒介変数 (M: 連続尺度と仮定) を選んでください")
         m_col = self.get_column_selection_manual(multi=False)
         if isinstance(m_col, list): m_col = m_col[0]
 
-        # 統制変数の選択（任意）
-        print("\n>> 4. 統制変数 (Covariates) を追加しますか？")
-        cov_vars = []
-        if input("追加する場合は 'y' を入力: ").lower() == 'y':
-            cov_vars = self.get_group_selection("統制変数を選んでください")
+        # 統制変数
+        cov_vars = self._select_covariates([y_col, x_col, m_col])
         
-        # 重複チェック
-        used_cols = {y_col, x_col, m_col}
-        cov_vars = [c for c in cov_vars if c not in used_cols]
+        # データ準備
+        target_cols = [y_col, x_col, m_col] + cov_vars
+        df_model = self.df[target_cols].apply(pd.to_numeric, errors='coerce').dropna()
         
-        all_cols = [y_col, x_col, m_col] + cov_vars
-        
-        # データ準備 (欠損値除去と数値変換)
-        df_model = self.df[all_cols].apply(pd.to_numeric, errors='coerce').dropna()
-        
-        if len(df_model) < 10:
-            print("エラー: 有効なサンプルサイズが少なすぎます。")
+        if len(df_model) < 20:
+            print("エラー: サンプルサイズが不足しています。")
             return
 
         print(f"\n分析対象データ数: N = {len(df_model)}")
-        print("ブートストラップ検定を実行中... (処理に数秒かかる場合があります)")
-        
-        # === 内部関数: 回帰係数を計算して間接効果を返す ===
-        def calculate_effects(data_sample):
-            # Model 1: M ~ X + Covs (Path a)
-            X_m = sm.add_constant(data_sample[[x_col] + cov_vars])
-            Y_m = data_sample[m_col]
-            model_m = sm.OLS(Y_m, X_m).fit()
-            a_path = model_m.params[x_col]
-            
-            # Model 2: Y ~ X + M + Covs (Path c' and b)
-            X_y = sm.add_constant(data_sample[[x_col, m_col] + cov_vars])
-            Y_y = data_sample[y_col]
-            model_y = sm.OLS(Y_y, X_y).fit()
-            b_path = model_y.params[m_col]
-            c_prime_path = model_y.params[x_col] # 直接効果
-            
-            indirect_effect = a_path * b_path
-            total_effect = c_prime_path + indirect_effect
-            
-            return a_path, b_path, c_prime_path, indirect_effect, total_effect
+        print("ブートストラップ検定を実行中... (Model 4)")
 
+        # 内部関数: 推定ロジック
+        def fit_model4(data):
+            # Path a (X -> M): OLS
+            X_a = sm.add_constant(data[[x_col] + cov_vars])
+            model_a = sm.OLS(data[m_col], X_a).fit()
+            a = model_a.params[x_col]
+            
+            # Path b, c' (X, M -> Y): Ordered Logit
+            exog_b = data[[x_col, m_col] + cov_vars]
+            model_b = OrderedModel(data[y_col], exog_b, distr='logit')
+            res_b = model_b.fit(method='bfgs', disp=False, maxiter=50)
+            
+            b = res_b.params[m_col]
+            c_prime = res_b.params[x_col]
+            
+            return {'a': a, 'b': b, 'c_prime': c_prime, 'ind': a * b}
+
+        # 実行と結果表示
+        self._execute_bootstrap_and_report(df_model, fit_model4, "Model 4 (Simple)", ['ind'])
+
+    def _run_serial_mediation_hybrid(self):
+        """系列媒介分析 (Model 6) の実行部"""
+        print("\n--- Model 6: 系列媒介分析 (X -> M1 -> M2 -> Y) ---")
+        
+        # 変数選択
+        print("\n>> 1. 従属変数 (Y: 順序尺度) を選んでください")
+        y_col = self.get_column_selection_manual(multi=False)
+        if isinstance(y_col, list): y_col = y_col[0]
+
+        print("\n>> 2. 独立変数 (X) を選んでください")
+        x_col = self.get_column_selection_manual(multi=False)
+        if isinstance(x_col, list): x_col = x_col[0]
+        
+        print("\n>> 3. 第1媒介変数 (M1: 連続と仮定) を選んでください (Xの直後)")
+        m1_col = self.get_column_selection_manual(multi=False)
+        if isinstance(m1_col, list): m1_col = m1_col[0]
+        
+        print("\n>> 4. 第2媒介変数 (M2: 連続と仮定) を選んでください (M1の直後)")
+        m2_col = self.get_column_selection_manual(multi=False)
+        if isinstance(m2_col, list): m2_col = m2_col[0]
+
+        # 統制変数
+        cov_vars = self._select_covariates([y_col, x_col, m1_col, m2_col])
+        
+        # データ準備
+        target_cols = [y_col, x_col, m1_col, m2_col] + cov_vars
+        df_model = self.df[target_cols].apply(pd.to_numeric, errors='coerce').dropna()
+        
+        if len(df_model) < 20:
+            print("エラー: サンプルサイズが不足しています。")
+            return
+
+        print(f"\n分析対象データ数: N = {len(df_model)}")
+        print("ブートストラップ検定を実行中... (Model 6)")
+
+        # 内部関数: 推定ロジック
+        def fit_model6(data):
+            # Step 1: M1 ~ X (OLS) -> Path a1
+            X_1 = sm.add_constant(data[[x_col] + cov_vars])
+            m1_model = sm.OLS(data[m1_col], X_1).fit()
+            a1 = m1_model.params[x_col]
+            
+            # Step 2: M2 ~ X + M1 (OLS) -> Path a2, d21
+            X_2 = sm.add_constant(data[[x_col, m1_col] + cov_vars])
+            m2_model = sm.OLS(data[m2_col], X_2).fit()
+            a2 = m2_model.params[x_col]
+            d21 = m2_model.params[m1_col] # M1 -> M2
+            
+            # Step 3: Y ~ X + M1 + M2 (Ordered Logit) -> Path c', b1, b2
+            exog_y = data[[x_col, m1_col, m2_col] + cov_vars]
+            y_model = OrderedModel(data[y_col], exog_y, distr='logit')
+            y_res = y_model.fit(method='bfgs', disp=False, maxiter=50)
+            
+            c_prime = y_res.params[x_col]
+            b1 = y_res.params[m1_col]
+            b2 = y_res.params[m2_col]
+            
+            # 間接効果の計算
+            ind1 = a1 * b1              # X -> M1 -> Y
+            ind2 = a2 * b2              # X -> M2 -> Y
+            ind3 = a1 * d21 * b2        # X -> M1 -> M2 -> Y (Serial)
+            total_ind = ind1 + ind2 + ind3
+            
+            return {
+                'ind1': ind1, 'ind2': ind2, 'ind3': ind3, 'total_ind': total_ind,
+                'a1': a1, 'a2': a2, 'd21': d21, 'b1': b1, 'b2': b2, 'c_prime': c_prime
+            }
+
+        # 実行と結果表示
+        self._execute_bootstrap_and_report(
+            df_model, fit_model6, "Model 6 (Serial)", 
+            ['ind1', 'ind2', 'ind3', 'total_ind']
+        )
+
+    def _select_covariates(self, exclude_cols):
+        """統制変数の選択ヘルパー"""
+        print("\n>> 統制変数 (Covariates) を追加しますか？")
+        cov_vars = []
+        if input("追加する場合は 'y' を入力: ").lower() == 'y':
+            cov_vars = self.get_group_selection("統制変数を選んでください")
+        # 重複除外
+        used_cols = set(exclude_cols)
+        return [c for c in cov_vars if c not in used_cols]
+
+    def _execute_bootstrap_and_report(self, df, fit_func, title, effect_keys):
+        """ブートストラップ実行と結果レポートの共通処理"""
+        n_boot = 2000
+        results_boot = {k: [] for k in effect_keys}
+        success_count = 0
+        
         # 1. 観測データでの推定
-        a_obs, b_obs, c_prime_obs, ind_obs, tot_obs = calculate_effects(df_model)
-        
-        # 2. ブートストラップ法による信頼区間の算出
-        n_boot = 2000 # ブートストラップ回数 (通常1000~5000)
-        boot_indirect_effects = []
-        
         try:
-            for _ in range(n_boot):
-                # リサンプリング (重複を許してN個取り出す)
-                sample_df = resample(df_model, replace=True, n_samples=len(df_model))
-                
-                # 計算できないサンプル(分散0など)が出た場合スキップ
-                try:
-                    _, _, _, ind_boot, _ = calculate_effects(sample_df)
-                    boot_indirect_effects.append(ind_boot)
-                except:
-                    continue
-            
-            if len(boot_indirect_effects) < 100:
-                print("エラー: ブートストラップ計算に失敗しました。")
-                return
-
-            # 95%信頼区間の計算 (パーセンタイル法)
-            lower_ci = np.percentile(boot_indirect_effects, 2.5)
-            upper_ci = np.percentile(boot_indirect_effects, 97.5)
-            
-            # === 結果の表示 ===
-            print("\n" + "="*50)
-            print(f"媒介分析結果 (Bootstrap samples={n_boot})")
-            print(f"Model: {x_col} (X) -> {m_col} (M) -> {y_col} (Y)")
-            if cov_vars: print(f"Controls: {cov_vars}")
-            print("-" * 50)
-            
-            # パス係数の表示
-            print(f"Path a  (X -> M)     : {a_obs:.4f}")
-            print(f"Path b  (M -> Y)     : {b_obs:.4f}")
-            print(f"Path c' (Direct X->Y): {c_prime_obs:.4f}")
-            print("-" * 50)
-            print(f"Total Effect (c)     : {tot_obs:.4f}")
-            print(f"Indirect Effect (ab) : {ind_obs:.4f}")
-            print(f"95% Bootstrap CI     : [{lower_ci:.4f}, {upper_ci:.4f}]")
-            print("="*50)
-            
-            # 判定コメント
-            if lower_ci > 0 or upper_ci < 0:
-                print(">> 判定: 95%信頼区間がゼロを含まないため、間接効果は「有意」です。")
-                print("   (媒介効果が存在することが示唆されます)")
-            else:
-                print(">> 判定: 信頼区間がゼロを含んでいるため、間接効果は「有意ではありません」。")
-
-            # 結果保存
-            save_path = os.path.join(OUTPUT_DIR, "mediation_result.txt")
-            with open(save_path, "w") as f:
-                f.write(f"Indirect Effect: {ind_obs}\nCI: [{lower_ci}, {upper_ci}]")
-            
+            obs_res = fit_func(df)
         except Exception as e:
-            print(f"\n計算中にエラーが発生しました: {e}")
+            print(f"初期分析エラー: {e}")
+            return
+
+        # 2. ブートストラップ
+        for i in range(n_boot):
+            sample = resample(df, replace=True, n_samples=len(df))
+            try:
+                res = fit_func(sample)
+                for k in effect_keys:
+                    results_boot[k].append(res[k])
+                success_count += 1
+            except:
+                pass # 収束しない場合はスキップ
+            
+            if (i+1) % 500 == 0:
+                print(f"... {i+1} iterations")
+
+        if success_count < 100:
+            print("エラー: ブートストラップの成功回数が少なすぎます。")
+            return
+
+        # 3. 結果表示
+        print(f"\n{'='*60}")
+        print(f"【{title} 結果】 (N={len(df)}, Boot={success_count})")
+        print(f"{'-'*60}")
+        
+        # 観測変数のパス係数などを表示（簡易版）
+        print(">> Point Estimates (Path Coefficients):")
+        for k, v in obs_res.items():
+            if k not in effect_keys: # パス係数のみ表示
+                print(f"   {k}: {v:.4f}")
+        
+        print(f"{'-'*60}")
+        print(">> Indirect Effects (Bootstrap 95% CI):")
+        
+        save_lines = [f"{title} Results\n"]
+        
+        for k in effect_keys:
+            vals = results_boot[k]
+            lower = np.percentile(vals, 2.5)
+            upper = np.percentile(vals, 97.5)
+            pt_est = obs_res[k]
+            
+            sig = "*" if (lower > 0 or upper < 0) else "n.s."
+            
+            # 表示名の整形
+            if k == 'ind': label = "Indirect (X->M->Y)"
+            elif k == 'ind1': label = "Ind1 (X->M1->Y)"
+            elif k == 'ind2': label = "Ind2 (X->M2->Y)"
+            elif k == 'ind3': label = "Ind3 (X->M1->M2->Y)"
+            elif k == 'total_ind': label = "Total Indirect"
+            else: label = k
+            
+            print(f" {label:<20} : {pt_est:.4f}  [{lower:.4f}, {upper:.4f}] {sig}")
+            save_lines.append(f"{label}: {pt_est:.4f} CI[{lower:.4f}, {upper:.4f}]\n")
+
+        print(f"{'='*60}")
+        
+        # 保存
+        save_path = os.path.join(OUTPUT_DIR, "mediation_hybrid_result.txt")
+        with open(save_path, "w", encoding='utf-8') as f:
+            f.writelines(save_lines)
+        print(f"結果を保存しました: {save_path}")
 
 if __name__ == "__main__":
     analyzer = SocialAnalyzer(DATA_FILE, INDEX_FILE)
@@ -656,11 +848,13 @@ if __name__ == "__main__":
         print("\n==============================")
         print("1. 基本統計量")
         print("2. グループ間比較 (t検定 / 分散分析 / ノンパラ)")
-        print("3. 順序ロジスティック回帰分析") # <--- 追加
+        print("3. 順序ロジスティック回帰分析")
         print("4. 通常の回帰分析 (OLS)")
+        print("5. 変数の分布確認 (ヒストグラム)") # <--- 追加
         print("6. 主成分分析 (PCA)")
         print("7. 信頼性分析 (α係数)")
-        print("8. 媒介分析 (ブートストラップ法)") # <--- 追加
+        print("8. 媒介分析 (Model 4 / Model 6)")
+        print("9. 相関分析 & ヒートマップ")       # <--- 追加
         print("0. 終了")
         print("==============================")
         
@@ -668,8 +862,10 @@ if __name__ == "__main__":
         if c == '0': break
         elif c == '1': analyzer.run_basic_stats()
         elif c == '2': analyzer.run_group_comparison()
-        elif c == '3': analyzer.run_ordinal_regression() # <--- 追加
+        elif c == '3': analyzer.run_ordinal_regression()
         elif c == '4': analyzer.run_regression()
+        elif c == '5': analyzer.run_distribution_check() # <--- 追加
         elif c == '6': analyzer.run_pca()
         elif c == '7': analyzer.run_reliability()
         elif c == '8': analyzer.run_mediation_analysis()
+        elif c == '9': analyzer.run_correlation_analysis() # <--- 追加

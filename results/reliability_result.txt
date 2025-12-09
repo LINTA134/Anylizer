@@ -1,0 +1,3 @@
+Items: ['intent_altruistic', 'intent_fact_telling']
+N: 59
+Cronbach's Alpha: 0.6716
